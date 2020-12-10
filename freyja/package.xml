@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package>
-  <name>freyja_configfiles</name>
+  <name>freyja</name>
   <version>0.1.0</version>
-  <description>The freyja_configfiles package</description>
+  <description>The freyja package containing launch and config files</description>
 
   <maintainer email="ashankar@cse.unl.edu">aj</maintainer>
   <license>GPLv3</license>
