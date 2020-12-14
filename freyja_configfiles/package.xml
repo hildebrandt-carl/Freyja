@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package>
-  <name>freyja</name>
+  <name>freyja_configfiles</name>
   <version>0.1.0</version>
   <description>The freyja package containing launch and config files</description>
 

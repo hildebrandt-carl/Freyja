@@ -36,6 +36,8 @@ typedef Eigen::Matrix<double, 1, 3> Pos3ax;
 typedef Eigen::Matrix<double, 1, 6> PosVel3ax;
 typedef Eigen::Matrix<double, 1, 9> PosVelAcc3ax;
 
+enum modes{time_mode=0, speed_mode=1};
+
 class TrajectoryGenerator
 {
   ros::NodeHandle nh_, priv_nh_;
@@ -46,8 +48,8 @@ class TrajectoryGenerator
   Eigen::Matrix<double, 3, 3> planning_cur_state_;
   Eigen::Matrix<double, 1, 6> final_state_;
 
-  Eigen::Matrix<double, 1, 3> gradients_;
-  Eigen::Matrix<double, 1, 3> intersection_;
+  Eigen::Matrix<double, 1, 3> segment_gradients_;
+  Eigen::Matrix<double, 1, 3> segment_intersection_;
 
   double yaw_target;
   
@@ -59,8 +61,8 @@ class TrajectoryGenerator
   ros::Timer traj_timer_;
   bool traj_init_;
 
-  bool time_mode;
-  double time_division_;
+  modes mode_;
+  double segment_percentage_;
   
   float k_thresh_skipreplan_;
 
@@ -102,23 +104,22 @@ TrajectoryGenerator::TrajectoryGenerator() : nh_(), priv_nh_("~")
   /* initial location for hover */
   priv_nh_.param( "init_pn", init_pn_, float(0.0) );
   priv_nh_.param( "init_pe", init_pe_, float(0.0) );
-  priv_nh_.param( "init_pd", init_pd_, float(-2.5) );
+  priv_nh_.param( "init_pd", init_pd_, float(-0.75) );
 
   /* unused argument for trajectory shaping */
   priv_nh_.param( "term_style", terminal_style_, int(1) );
 
-
+  /* used for speed and duration constraints*/
   traj_alloc_duration_ = 10.0;
   traj_alloc_speed_ = 1.0;
+
   traj_init_ = false;
 
   // default to speed mode (as per waypoint default)
-  time_mode = false;
+  mode_ = speed_mode;
 
   // Init eigen matrices 
   current_state_ = Eigen::Matrix<double, 1, 9>::Zero();
-
-  /* call once to avoid undefined matrices */
   update_premult_matrix( traj_alloc_duration_ );
   
   /* Subscribers */
@@ -127,10 +128,8 @@ TrajectoryGenerator::TrajectoryGenerator() : nh_(), priv_nh_("~")
   waypoint_sub_ = nh_.subscribe( "/waypoint_state", 1, 
                            &TrajectoryGenerator::waypointCallback, this );
 
-
   /* Publishers */
   traj_ref_pub_ = nh_.advertise<freyja_msgs::ReferenceState>( "/reference_state", 1, true );
-
 
   /* Fixed-rate trajectory provider. Ensure ~40-50hz. */
   float traj_period = 1.0/50.0;
@@ -153,20 +152,20 @@ void TrajectoryGenerator::waypointCallback( const freyja_msgs::WaypointTarget::C
       translational_speed
       waypoint_mode (WaypointTarget::TIME=0, WaypointTarget::SPEED=1)
   */
-
-  // Update yaw
-  yaw_target = msg->terminal_yaw;
-
-  // check if the change is big enough to do a replan: final_state_: [1x6]
-  Eigen::Matrix<double, 1, 6> updated_final_state;
-  updated_final_state << msg->terminal_pn, msg->terminal_pe, msg->terminal_pd,
-                         msg->terminal_vn, msg->terminal_ve, msg->terminal_vd;
-  
-  if( ( updated_final_state - final_state_ ).norm() > k_thresh_skipreplan_ )
+  // Check if we are in time or speed mode
+  if ( msg->waypoint_mode == msg->TIME ||  msg->waypoint_mode == msg->SPEED )
   {
-    // Check if we are in time or speed mode
-    if ( msg->waypoint_mode == msg->TIME ||  msg->waypoint_mode == msg->SPEED )
+    // Update yaw
+    yaw_target = msg->terminal_yaw;
+
+    // check if the change is big enough to do a replan: final_state_: [1x6]
+    Eigen::Matrix<double, 1, 6> updated_final_state;
+    updated_final_state << msg->terminal_pn, msg->terminal_pe, msg->terminal_pd,
+    msg->terminal_vn, msg->terminal_ve, msg->terminal_vd;
+
+    if( ( updated_final_state - final_state_ ).norm() > k_thresh_skipreplan_ )
     {
+
       /* accept new waypoint */
       final_state_ = updated_final_state;
 
@@ -174,25 +173,29 @@ void TrajectoryGenerator::waypointCallback( const freyja_msgs::WaypointTarget::C
       {
         traj_alloc_duration_ = msg->allocated_time;
         trigger_replan_time( traj_alloc_duration_ );
-        time_mode = true;
+        mode_ = time_mode;
       }
       else // Speed mode 
       {
         traj_alloc_speed_ = msg->translational_speed;
         trigger_replan_speed( traj_alloc_speed_ );
-        time_mode = false;
+        mode_ = speed_mode;
       }
+      ROS_WARN( "Plan generated!" );
       t_traj_init_ = ros::Time::now();
+
     }
     else
     {
       // Reject waypoint
-      ROS_WARN_STREAM( ros::this_node::getName() << ": Waypoint mode incorrectly specified. Ignoring!" );
+      ROS_WARN_STREAM( ros::this_node::getName() << ": New WP too close to old WP. Ignoring!" );
     }
   }
   else
+  {
     // Reject waypoint
-    ROS_WARN_STREAM( ros::this_node::getName() << ": New WP too close to old WP. Ignoring!" );
+    ROS_WARN_STREAM( ros::this_node::getName() << ": Waypoint mode incorrectly specified. Ignoring!" );
+  }
 
   // this is only handled once - trajectory is never reinit, only updated.
   if( traj_init_ == false )
@@ -206,8 +209,7 @@ void TrajectoryGenerator::trigger_replan_time( const double &dt )
   /* TWO STEPS:
      1. Take current snapshot
         Deltas are shaped as: [px py pz; vx vy vz].
-  */
-  ROS_WARN( "Generating plan!" );
+  */ 
   auto targetpos = final_state_.head<3>();
   auto targetvel = final_state_.tail<3>();
   auto currentpos = current_state_.head<3>();
@@ -228,21 +230,18 @@ void TrajectoryGenerator::trigger_replan_time( const double &dt )
 
 void TrajectoryGenerator::trigger_replan_speed( const double &speed )
 {
-  ROS_WARN( "Generating plan!" );
   // Get current and target position
   auto targetpos = final_state_.head<3>();
   auto currentpos = current_state_.head<3>();
 
   // x = x0 + (x1 - x0)t ; y = y0 + (y1 - y0)t ; z = z0 + (z1 - z0)t
-  gradients_ = targetpos - currentpos;
-  intersection_ = currentpos;
+  segment_gradients_ = targetpos - currentpos;
+  segment_intersection_ = currentpos;
 
   // Calculate length
-  double length = sqrt(pow(targetpos[0] - currentpos[0], 2) +  
-                       pow(targetpos[1] - currentpos[1], 2) +  
-                       pow(targetpos[2] - currentpos[2], 2)); 
+  double segment_length = (targetpos - currentpos).norm();
 
-  time_division_ = speed / length;
+  segment_percentage_ = speed / segment_length;
 }
 
 inline void TrajectoryGenerator::update_premult_matrix( const double &tf )
@@ -272,7 +271,9 @@ void TrajectoryGenerator::trajectoryReference( const ros::TimerEvent &event )
     
   float tnow = (ros::Time::now() - t_traj_init_).toSec();
   
-  if ( time_mode ) // Time mode
+  Eigen::Matrix<double, 3, 3> tref;
+
+  if ( mode_ == time_mode ) // Time mode
   {
     /* check if we are past the final time */
     if( tnow > traj_alloc_duration_ || !traj_init_ )
@@ -295,47 +296,46 @@ void TrajectoryGenerator::trajectoryReference( const ros::TimerEvent &event )
                                 1, tnow, t2,
                                 0,  1, tnow,
                                 0,  0,   1).finished() * planning_cur_state_;
-    
-    
-    /* fill in and publish */
-    traj_ref_.pn = traj_pt(0,0);
-    traj_ref_.pe = traj_pt(0,1);
-    traj_ref_.pd = traj_pt(0,2);
-    
-    traj_ref_.vn = traj_pt(1,0);
-    traj_ref_.ve = traj_pt(1,1);
-    traj_ref_.vd = traj_pt(1,2);
-    
-    traj_ref_.yaw = yaw_target;     // nothing special for yaw
-    traj_ref_.an = traj_pt(2,0);
-    traj_ref_.ae = traj_pt(2,1);
-    traj_ref_.ad = traj_pt(2,2);
+
+    // TODO (couldnt get transpose to work)
+    tref << traj_pt.transpose();
   }
   else // Speed mode
   {
     /* check if we have arrived at the waypoint */
-    if( ( tnow * time_division_ ) >= 1  || !traj_init_ )
+    if( ( tnow * segment_percentage_ ) >= 1  || !traj_init_ )
     {
       publishHoverReference();
       return;
     }
-    
-    /* fill in and publish */
-    traj_ref_.pn = gradients_[0] * (tnow * time_division_) + intersection_[0];
-    traj_ref_.pe = gradients_[1] * (tnow * time_division_) + intersection_[1];
-    traj_ref_.pd = gradients_[2] * (tnow * time_division_) + intersection_[2];
-    
-    traj_ref_.vn = gradients_[0];
-    traj_ref_.ve = gradients_[1];
-    traj_ref_.vd = gradients_[2];
-    
-    traj_ref_.yaw = yaw_target;     // nothing special for yaw
-    traj_ref_.an = 0;
-    traj_ref_.ae = 0;
-    traj_ref_.ad = 0;
+
+    // Calculate new position based on line
+    auto new_pos = segment_gradients_ * (tnow * segment_percentage_) + 
+          segment_intersection_;
+
+    // Todo clean up this operation
+    tref << new_pos(0, 0), segment_gradients_(0), 0,
+            new_pos(0, 1), segment_gradients_(1), 0,
+            new_pos(0, 2), segment_gradients_(2), 0;
+
   }
   
+  /* fill in and publish */
+  traj_ref_.pn = tref(0);
+  traj_ref_.pe = tref(1);
+  traj_ref_.pd = tref(2);
+
+  traj_ref_.vn = tref(3);
+  traj_ref_.ve = tref(4);
+  traj_ref_.vd = tref(5);
+
+  traj_ref_.an = tref(6);
+  traj_ref_.ae = tref(7);
+  traj_ref_.ad = tref(8);
+
+  traj_ref_.yaw = yaw_target;     // nothing special for yaw
   traj_ref_.header.stamp = ros::Time::now();
+
   traj_ref_pub_.publish( traj_ref_ );
 }
 
@@ -378,3 +378,6 @@ int main( int argc, char** argv )
   ros::spin();
   return 0;
 }
+
+
+//TODO: Add status waypoint_done

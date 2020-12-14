@@ -23,6 +23,9 @@
   <arg name="use_velctrl_only"          default="false"/>
   <arg name="bias_compensation"         default="false" />
 
+  <!-- Used for examples -->
+  <arg name="use_examples"              default="false"/>
+  <arg name="example_number"            default="0" />
 
   <!-- state source can be: "apm", "asctec", "vicon" or "onboard_camera" -->
   <!-- implemented filters: "median", "gauss" and "lwma" -->
@@ -49,21 +52,25 @@
   </node>
 
   <!-- autopilot communication node -->
-  <!-- <node name="asctec_handler" pkg="asctec_handler" type="asctec_handler_node"
+  <node name="asctec_handler" pkg="asctec_handler" type="asctec_handler_node"
         if="$(eval autopilot=='asctec')">
     <param name="serial_port" value="/dev/ttyUSB0" />
-  </node> -->
+  </node>
   
   <!-- apm/px4 needs a handler for translation, plus a mavros node -->
-  <!-- <group if="$(eval autopilot=='arducopter')">
+  <group if="$(eval autopilot=='arducopter')">
     <node name="apm_handler" pkg="apm_handler" type="apm_handler_node" />
     <include file="$(find freyja_configfiles)/apm_nimbus.launch">
       <arg name="fcu_url" value="$(arg comm_port)"/>
     </include>
-  </group> -->
+  </group>
 
   <node name="waypoint_manager" pkg="waypoint_manager" type="waypoint_manager_node" output="screen"
 				if="$(eval use_waypoint_handler)"> 
 	</node>
+
+  <include file="$(find freyja_examples)/launch/example.launch" if="$(eval use_examples)" >
+    <arg name="example_number" value="$(arg example_number)"/>
+  </include>
   
 </launch>

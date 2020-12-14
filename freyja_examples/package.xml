@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package>
-  <name>examples</name>
+  <name>freyja_examples</name>
   <version>0.0.0</version>
   <description>The examples package showing use cases</description>
 
