@@ -135,6 +135,8 @@ TrajectoryGenerator::TrajectoryGenerator() : nh_(), priv_nh_("~")
   float traj_period = 1.0/50.0;
   traj_timer_ = nh_.createTimer( ros::Duration(traj_period),
                             &TrajectoryGenerator::trajectoryReference, this );
+
+  ROS_WARN_STREAM( ros::this_node::getName() << ": Initialized, waiting for waypoint" );
 }
 
 void TrajectoryGenerator::currentStateCallback( const freyja_msgs::CurrentState::ConstPtr &msg )
@@ -271,7 +273,7 @@ void TrajectoryGenerator::trajectoryReference( const ros::TimerEvent &event )
     
   float tnow = (ros::Time::now() - t_traj_init_).toSec();
   
-  Eigen::Matrix<double, 3, 3> tref;
+  PosVelAcc3ax tref;
 
   if ( mode_ == time_mode ) // Time mode
   {
@@ -298,7 +300,8 @@ void TrajectoryGenerator::trajectoryReference( const ros::TimerEvent &event )
                                 0,  0,   1).finished() * planning_cur_state_;
 
     // TODO (couldnt get transpose to work)
-    tref << traj_pt.transpose();
+    // tref << traj_pt.transpose();
+    tref = traj_pt.reshaped<Eigen::RowMajor>().transpose();
   }
   else // Speed mode
   {
@@ -314,9 +317,10 @@ void TrajectoryGenerator::trajectoryReference( const ros::TimerEvent &event )
           segment_intersection_;
 
     // Todo clean up this operation
-    tref << new_pos(0, 0), segment_gradients_(0), 0,
-            new_pos(0, 1), segment_gradients_(1), 0,
-            new_pos(0, 2), segment_gradients_(2), 0;
+    // tref << new_pos(0, 0), segment_gradients_(0), 0,
+    //         new_pos(0, 1), segment_gradients_(1), 0,
+    //         new_pos(0, 2), segment_gradients_(2), 0;
+    tref << new_pos, segment_gradients, 0.0, 0.0, 0.0;
 
   }
   

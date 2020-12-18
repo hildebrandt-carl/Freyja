@@ -13,24 +13,14 @@
     <param name="example_traj_type" type="string" value="circle1"/>
   </node>
 
-  <node name="temporal_provider_node" pkg="freyja_examples" type="temporal_provider_node"
-        if="$(eval example_number==2)" >
-    <param name="example_traj_type" type="string" value="circle2"/>
-  </node>
-
-  <node name="temporal_provider_node" pkg="freyja_examples" type="temporal_provider_node"
-        if="$(eval example_number==3)" >
-    <param name="example_traj_type" type="string" value="circle2"/>
-  </node>
-
   <!-- Example 4/5: use_waypoint_handler:=true in freyja_controller.launch -->
   <node name="waypoint_provider_node" pkg="freyja_examples" type="waypoint_provider.py"
-        if="$(eval example_number==4)" >
+        if="$(eval example_number==2)" >
     <param name="/waypoint_mode" value="0" type="int" />
 	</node>
 
   <node name="waypoint_provider_node" pkg="freyja_examples" type="waypoint_provider.py"
-        if="$(eval example_number==5)" >
+        if="$(eval example_number==3)" >
     <param name="/waypoint_mode" value="1" type="int" />
 	</node>
 
